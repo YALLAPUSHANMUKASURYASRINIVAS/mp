@@ -8,14 +8,13 @@ import cv2
 import json
 import tempfile
 import os
-import shutil
+import requests
 from safetensors.torch import load_file
 from PIL import Image
 from gtts import gTTS
 from langdetect import detect
 from deep_translator import GoogleTranslator
 from pydantic import BaseModel
-import io
 
 app = FastAPI(title="Telugu OCR API")
 
@@ -30,27 +29,37 @@ app.add_middleware(
 # CONFIG
 # =========================
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-IMG_HEIGHT = 32
-IMG_WIDTH = 128
 
-MODEL_PATH = "models/model.safetensors"
-TOKENIZER_PATH = "models/tokenizer.json"
+MODEL_DIR = "models"
+MODEL_PATH = f"{MODEL_DIR}/model.safetensors"
+TOKENIZER_PATH = f"{MODEL_DIR}/tokenizer.json"
 
-LANGUAGES = {
-    "English": "en",
-    "Hindi": "hi",
-    "Telugu": "te",
-    "Tamil": "ta",
-    "Kannada": "kn",
-    "Malayalam": "ml",
-    "Marathi": "mr",
-    "Bengali": "bn",
-    "Gujarati": "gu",
-    "Punjabi": "pa"
-}
+# 🔥 YOUR GOOGLE DRIVE LINKS (EDIT THESE)
+MODEL_URL = "https://drive.google.com/uc?export=download&id=MODEL_FILE_ID"
+TOKENIZER_URL = "https://drive.google.com/uc?export=download&id=TOKENIZER_FILE_ID"
 
 # =========================
-# CRNN MODEL
+# DOWNLOAD MODEL
+# =========================
+def download_file(url, path):
+    if os.path.exists(path):
+        return
+    print(f"⬇ Downloading {path}...")
+    r = requests.get(url, stream=True)
+    with open(path, "wb") as f:
+        for chunk in r.iter_content(chunk_size=8192):
+            f.write(chunk)
+    print("✅ Download complete")
+
+def setup_model_files():
+    if not os.path.exists(MODEL_DIR):
+        os.makedirs(MODEL_DIR)
+
+    download_file(MODEL_URL, MODEL_PATH)
+    download_file(TOKENIZER_URL, TOKENIZER_PATH)
+
+# =========================
+# MODEL
 # =========================
 class CRNN(nn.Module):
     def __init__(self, num_classes):
@@ -73,178 +82,83 @@ class CRNN(nn.Module):
         x, _ = self.rnn(x)
         return self.fc(x)
 
-# =========================
-# LOAD MODEL ON STARTUP
-# =========================
 ocr_model = None
 idx_to_char = None
 
+# =========================
+# LOAD MODEL
+# =========================
 @app.on_event("startup")
 def load_model():
     global ocr_model, idx_to_char
-    if os.path.exists(MODEL_PATH) and os.path.exists(TOKENIZER_PATH):
-        vocab = json.load(open(TOKENIZER_PATH, encoding="utf-8"))
-        idx_to_char = {int(v): k for k, v in vocab.items()}
-        ocr_model = CRNN(len(vocab))
-        ocr_model.load_state_dict(load_file(MODEL_PATH))
-        ocr_model.to(DEVICE)
-        ocr_model.eval()
-        print("✅ OCR Model loaded")
-    else:
-        print("⚠️ Model files not found — using dummy OCR")
+
+    setup_model_files()  # 🔥 download here
+
+    vocab = json.load(open(TOKENIZER_PATH, encoding="utf-8"))
+    idx_to_char = {int(v): k for k, v in vocab.items()}
+
+    ocr_model = CRNN(len(vocab))
+    ocr_model.load_state_dict(load_file(MODEL_PATH))
+    ocr_model.to(DEVICE)
+    ocr_model.eval()
+
+    print("✅ Model Loaded Successfully")
 
 # =========================
-# OCR HELPERS
+# OCR
 # =========================
-def preprocess(img_array):
-    img = cv2.resize(img_array, (IMG_WIDTH, IMG_HEIGHT))
+def preprocess(img):
+    img = cv2.resize(img, (128, 32))
     img = img.astype(np.float32) / 255.0
     img = np.expand_dims(img, 0)
     img = np.expand_dims(img, 0)
     return torch.tensor(img).to(DEVICE)
 
-def decode_prediction(pred):
+def decode(pred):
     prev = -1
-    output = []
+    result = []
     for p in pred:
         if p != prev and p != 0:
-            output.append(idx_to_char.get(p, ""))
+            result.append(idx_to_char.get(p, ""))
         prev = p
-    return "".join(output)
+    return "".join(result)
 
-def run_ocr(img_array):
-    if ocr_model is None:
-        return "Model not loaded — place model.safetensors and tokenizer.json in /models folder"
+def run_ocr(img):
     with torch.no_grad():
-        out = ocr_model(preprocess(img_array))
+        out = ocr_model(preprocess(img))
     pred = out.argmax(2).squeeze().cpu().numpy()
-    return decode_prediction(pred)
+    return decode(pred)
 
 # =========================
-# TRANSLATION HELPER
+# TRANSLATE
 # =========================
-def translate_text(text: str, target_lang: str) -> str:
-    # Try offline NLLB first, fallback to Google
-    try:
-        from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-        model_name = "facebook/nllb-200-distilled-600M"
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        model = AutoModelForSeq2SeqLM.from_pretrained(model_name).to(DEVICE)
-        nllb_map = {
-            "en": "eng_Latn", "te": "tel_Telu", "hi": "hin_Deva",
-            "ta": "tam_Taml", "kn": "kan_Knda", "ml": "mal_Mlym",
-            "mr": "mar_Deva", "bn": "ben_Beng", "gu": "guj_Gujr", "pa": "pan_Guru"
-        }
-        tgt_code = nllb_map.get(target_lang, "eng_Latn")
-        inputs = tokenizer(text, return_tensors="pt").to(DEVICE)
-        tokens = model.generate(
-            **inputs,
-            forced_bos_token_id=tokenizer.convert_tokens_to_ids(tgt_code),
-            max_length=256
-        )
-        return tokenizer.decode(tokens[0], skip_special_tokens=True)
-    except Exception:
-        # Fallback to Google Translate (needs internet)
-        return GoogleTranslator(source='auto', target=target_lang).translate(text)
+def translate_text(text, target):
+    return GoogleTranslator(source='auto', target=target).translate(text)
 
 # =========================
-# API ENDPOINTS
+# API
 # =========================
-
 @app.get("/")
-def root():
-    return {"status": "Telugu OCR API is running 🚀"}
-
-@app.get("/languages")
-def get_languages():
-    return {"languages": LANGUAGES}
-
-@app.post("/ocr")
-async def ocr_endpoint(file: UploadFile = File(...)):
-    """Upload an image → returns extracted Telugu text"""
-    try:
-        contents = await file.read()
-        np_arr = np.frombuffer(contents, np.uint8)
-        img = cv2.imdecode(np_arr, cv2.IMREAD_GRAYSCALE)
-        if img is None:
-            raise HTTPException(status_code=400, detail="Invalid image")
-
-        text = run_ocr(img)
-        detected_lang = "te"
-        try:
-            detected_lang = detect(text)
-        except Exception:
-            pass
-
-        return {
-            "success": True,
-            "ocr_text": text,
-            "detected_language": detected_lang
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-class TranslateRequest(BaseModel):
-    text: str
-    target_language: str  # language code e.g. "en", "hi"
-
-@app.post("/translate")
-def translate_endpoint(req: TranslateRequest):
-    """Translate text to target language"""
-    try:
-        translated = translate_text(req.text, req.target_language)
-        return {
-            "success": True,
-            "original": req.text,
-            "translated": translated,
-            "target_language": req.target_language
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def home():
+    return {"status": "running 🚀"}
 
 @app.post("/ocr-translate")
-async def ocr_and_translate(
-    file: UploadFile = File(...),
-    target_language: str = "en"
-):
-    """Upload image → OCR → Translate in one step"""
-    try:
-        contents = await file.read()
-        np_arr = np.frombuffer(contents, np.uint8)
-        img = cv2.imdecode(np_arr, cv2.IMREAD_GRAYSCALE)
-        if img is None:
-            raise HTTPException(status_code=400, detail="Invalid image")
+async def ocr_translate(file: UploadFile = File(...), target_language: str = "en"):
+    contents = await file.read()
+    img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_GRAYSCALE)
 
-        ocr_text = run_ocr(img)
-        detected_lang = "te"
-        try:
-            detected_lang = detect(ocr_text)
-        except Exception:
-            pass
+    text = run_ocr(img)
+    translated = translate_text(text, target_language)
 
-        translated = translate_text(ocr_text, target_language)
-
-        return {
-            "success": True,
-            "ocr_text": ocr_text,
-            "detected_language": detected_lang,
-            "translated": translated,
-            "target_language": target_language
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "ocr_text": text,
+        "translated": translated,
+        "detected_language": "te"
+    }
 
 @app.post("/tts")
-def tts_endpoint(req: TranslateRequest):
-    """Convert text to speech → returns MP3 file"""
-    try:
-        tts = gTTS(text=req.text, lang=req.target_language)
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-        tts.save(tmp.name)
-        return FileResponse(
-            tmp.name,
-            media_type="audio/mpeg",
-            filename="speech.mp3"
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def tts(req: BaseModel):
+    tts = gTTS(text=req.text, lang=req.target_language)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    tts.save(tmp.name)
+    return FileResponse(tmp.name, media_type="audio/mpeg")
