@@ -10,12 +10,14 @@ import tempfile
 import os
 import requests
 from safetensors.torch import load_file
-from PIL import Image
 from gtts import gTTS
 from langdetect import detect
 from deep_translator import GoogleTranslator
 from pydantic import BaseModel
 
+# =========================
+# APP INIT
+# =========================
 app = FastAPI(title="Telugu OCR API")
 
 app.add_middleware(
@@ -34,21 +36,28 @@ MODEL_DIR = "models"
 MODEL_PATH = f"{MODEL_DIR}/model.safetensors"
 TOKENIZER_PATH = f"{MODEL_DIR}/tokenizer.json"
 
-# 🔥 YOUR GOOGLE DRIVE LINKS (EDIT THESE)
-MODEL_URL = "https://drive.google.com/uc?export=download&id=MODEL_FILE_ID"
-TOKENIZER_URL = "https://drive.google.com/uc?export=download&id=TOKENIZER_FILE_ID"
+# ✅ YOUR GOOGLE DRIVE LINKS
+MODEL_URL = "https://drive.google.com/uc?export=download&id=14Vpa6-DCmOA6m9mnjinD2OytA8-7iUzr"
+TOKENIZER_URL = "https://drive.google.com/uc?export=download&id=1qyGK1hW-UzdXBAPda-XkP9kSsnzFpgCI"
 
 # =========================
-# DOWNLOAD MODEL
+# DOWNLOAD MODEL FILES
 # =========================
 def download_file(url, path):
-    if os.path.exists(path):
+    if os.path.exists(path) and os.path.getsize(path) > 1000:
+        print(f"✅ {path} already exists")
         return
+
     print(f"⬇ Downloading {path}...")
-    r = requests.get(url, stream=True)
+    r = requests.get(url)
+
+    # ❌ Prevent wrong HTML downloads
+    if "text/html" in r.headers.get("Content-Type", ""):
+        raise Exception("❌ Download failed — got HTML instead of file")
+
     with open(path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=8192):
-            f.write(chunk)
+        f.write(r.content)
+
     print("✅ Download complete")
 
 def setup_model_files():
@@ -86,13 +95,16 @@ ocr_model = None
 idx_to_char = None
 
 # =========================
-# LOAD MODEL
+# LOAD MODEL ON STARTUP
 # =========================
 @app.on_event("startup")
 def load_model():
     global ocr_model, idx_to_char
 
-    setup_model_files()  # 🔥 download here
+    setup_model_files()
+
+    if os.path.getsize(TOKENIZER_PATH) == 0:
+        raise Exception("❌ tokenizer.json is empty")
 
     vocab = json.load(open(TOKENIZER_PATH, encoding="utf-8"))
     idx_to_char = {int(v): k for k, v in vocab.items()}
@@ -105,7 +117,7 @@ def load_model():
     print("✅ Model Loaded Successfully")
 
 # =========================
-# OCR
+# OCR FUNCTIONS
 # =========================
 def preprocess(img):
     img = cv2.resize(img, (128, 32))
@@ -130,13 +142,20 @@ def run_ocr(img):
     return decode(pred)
 
 # =========================
-# TRANSLATE
+# TRANSLATION
 # =========================
 def translate_text(text, target):
     return GoogleTranslator(source='auto', target=target).translate(text)
 
 # =========================
-# API
+# REQUEST MODELS
+# =========================
+class TTSRequest(BaseModel):
+    text: str
+    target_language: str
+
+# =========================
+# API ENDPOINTS
 # =========================
 @app.get("/")
 def home():
@@ -147,17 +166,27 @@ async def ocr_translate(file: UploadFile = File(...), target_language: str = "en
     contents = await file.read()
     img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_GRAYSCALE)
 
+    if img is None:
+        raise HTTPException(status_code=400, detail="Invalid image")
+
     text = run_ocr(img)
+
+    detected_lang = "te"
+    try:
+        detected_lang = detect(text)
+    except:
+        pass
+
     translated = translate_text(text, target_language)
 
     return {
         "ocr_text": text,
         "translated": translated,
-        "detected_language": "te"
+        "detected_language": detected_lang
     }
 
 @app.post("/tts")
-def tts(req: BaseModel):
+def tts(req: TTSRequest):
     tts = gTTS(text=req.text, lang=req.target_language)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     tts.save(tmp.name)
