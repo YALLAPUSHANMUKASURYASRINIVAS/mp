@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: telugu-ocr-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+    disk:
+      name: models
+      mountPath: /opt/render/project/src/models
+      sizeGB: 5
