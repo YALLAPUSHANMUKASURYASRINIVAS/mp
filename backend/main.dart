@@ -8,7 +8,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 // ─── CONFIG ────────────────────────────────────────────────
 // Change this to your Render/Railway URL after deploying backend
-const String API_BASE = "https://YOUR-BACKEND.onrender.com";
+const String API_BASE = "https://mp-uulq.onrender.com";
 
 // ─── MAIN ───────────────────────────────────────────────────
 void main() async {
