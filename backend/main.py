@@ -250,14 +250,14 @@ print(f"⬇ Downloading {path}...")
 session = requests.Session()
 response = session.get(url, stream=True)
 
-# FIX: handle Google Drive large file
+# Handle Google Drive large file
 for key, value in response.cookies.items():
     if key.startswith("download_warning"):
         url = url + "&confirm=" + value
         response = session.get(url, stream=True)
 
 if "text/html" in response.headers.get("Content-Type", ""):
-    raise Exception("❌ Wrong file downloaded (HTML instead of model)")
+    raise Exception("❌ Wrong file downloaded")
 
 with open(path, "wb") as f:
     for chunk in response.iter_content(1024):
@@ -281,18 +281,20 @@ download_file(TOKENIZER_URL, TOKENIZER_PATH)
 class CRNN(nn.Module):
 def **init**(self, num_classes):
 super().**init**()
-self.cnn = nn.Sequential(
-nn.Conv2d(1,64,3,1,1), nn.ReLU(), nn.MaxPool2d(2,2),
-nn.Conv2d(64,128,3,1,1), nn.ReLU(), nn.MaxPool2d(2,2),
-nn.Conv2d(128,256,3,1,1), nn.ReLU(),
-nn.Conv2d(256,256,3,1,1), nn.ReLU(), nn.MaxPool2d((2,1)),
-nn.Conv2d(256,512,3,1,1), nn.ReLU(),
-nn.Conv2d(512,512,3,1,1), nn.ReLU(), nn.MaxPool2d((2,1))
-)
-self.rnn = nn.LSTM(512*2, 256, num_layers=2, bidirectional=True)
-self.fc = nn.Linear(512, num_classes)
 
 ```
+    self.cnn = nn.Sequential(
+        nn.Conv2d(1,64,3,1,1), nn.ReLU(), nn.MaxPool2d(2,2),
+        nn.Conv2d(64,128,3,1,1), nn.ReLU(), nn.MaxPool2d(2,2),
+        nn.Conv2d(128,256,3,1,1), nn.ReLU(),
+        nn.Conv2d(256,256,3,1,1), nn.ReLU(), nn.MaxPool2d((2,1)),
+        nn.Conv2d(256,512,3,1,1), nn.ReLU(),
+        nn.Conv2d(512,512,3,1,1), nn.ReLU(), nn.MaxPool2d((2,1))
+    )
+
+    self.rnn = nn.LSTM(512*2, 256, num_layers=2, bidirectional=True)
+    self.fc = nn.Linear(512, num_classes)
+
 def forward(self, x):
     x = self.cnn(x)
     b, c, h, w = x.size()
