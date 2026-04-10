@@ -211,10 +211,10 @@ from pydantic import BaseModel
 app = FastAPI()
 
 app.add_middleware(
-CORSMiddleware,
-allow_origins=["*"],
-allow_methods=["*"],
-allow_headers=["*"],
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
@@ -226,163 +226,159 @@ TOKENIZER_PATH = os.path.join(MODEL_DIR, "tokenizer.json")
 MODEL_URL = "https://drive.google.com/uc?export=download&id=14Vpa6-DCmOA6m9mnjinD2OytA8-7iUzr"
 TOKENIZER_URL = "https://drive.google.com/uc?export=download&id=1qyGK1hW-UzdXBAPda-XkP9kSsnzFpgCI"
 
+
 # =========================
-
-# DOWNLOAD FILES (FIXED)
-
+# DOWNLOAD FILES
 # =========================
 
 def download_file(url, path):
-if os.path.exists(path) and os.path.getsize(path) > 1000:
-print("File already exists")
-return
+    if os.path.exists(path) and os.path.getsize(path) > 1000:
+        print("File already exists:", path)
+        return
 
-```
-print("Downloading:", path)
+    print("Downloading:", path)
+    r = requests.get(url)
 
-r = requests.get(url)
+    if "text/html" in r.headers.get("Content-Type", ""):
+        raise Exception("Wrong download link — got HTML instead of file")
 
-if "text/html" in r.headers.get("Content-Type", ""):
-    raise Exception("Wrong download link")
+    with open(path, "wb") as f:
+        f.write(r.content)
 
-with open(path, "wb") as f:
-    f.write(r.content)
-```
+    print("Download complete:", path)
+
 
 def setup_files():
-os.makedirs(MODEL_DIR, exist_ok=True)
-download_file(MODEL_URL, MODEL_PATH)
-download_file(TOKENIZER_URL, TOKENIZER_PATH)
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    download_file(MODEL_URL, MODEL_PATH)
+    download_file(TOKENIZER_URL, TOKENIZER_PATH)
+
 
 # =========================
-
 # MODEL
-
 # =========================
 
 class CRNN(nn.Module):
-def **init**(self, num_classes):
-super().**init**()
+    def __init__(self, num_classes):
+        super().__init__()
+        self.cnn = nn.Sequential(
+            nn.Conv2d(1, 64, 3, 1, 1), nn.ReLU(), nn.MaxPool2d(2, 2),
+            nn.Conv2d(64, 128, 3, 1, 1), nn.ReLU(), nn.MaxPool2d(2, 2),
+            nn.Conv2d(128, 256, 3, 1, 1), nn.ReLU(),
+            nn.Conv2d(256, 256, 3, 1, 1), nn.ReLU(), nn.MaxPool2d((2, 1)),
+            nn.Conv2d(256, 512, 3, 1, 1), nn.ReLU(),
+            nn.Conv2d(512, 512, 3, 1, 1), nn.ReLU(), nn.MaxPool2d((2, 1))
+        )
+        self.rnn = nn.LSTM(512 * 2, 256, num_layers=2, bidirectional=True)
+        self.fc = nn.Linear(512, num_classes)
 
-```
-    self.cnn = nn.Sequential(
-        nn.Conv2d(1,64,3,1,1), nn.ReLU(), nn.MaxPool2d(2,2),
-        nn.Conv2d(64,128,3,1,1), nn.ReLU(), nn.MaxPool2d(2,2),
-        nn.Conv2d(128,256,3,1,1), nn.ReLU(),
-        nn.Conv2d(256,256,3,1,1), nn.ReLU(), nn.MaxPool2d((2,1)),
-        nn.Conv2d(256,512,3,1,1), nn.ReLU(),
-        nn.Conv2d(512,512,3,1,1), nn.ReLU(), nn.MaxPool2d((2,1))
-    )
+    def forward(self, x):
+        x = self.cnn(x)
+        b, c, h, w = x.size()
+        x = x.view(b, c * h, w).permute(2, 0, 1)
+        x, _ = self.rnn(x)
+        return self.fc(x)
 
-    self.rnn = nn.LSTM(512*2, 256, num_layers=2, bidirectional=True)
-    self.fc = nn.Linear(512, num_classes)
-
-def forward(self, x):
-    x = self.cnn(x)
-    b, c, h, w = x.size()
-    x = x.view(b, c*h, w).permute(2, 0, 1)
-    x, _ = self.rnn(x)
-    return self.fc(x)
-```
 
 ocr_model = None
 idx_to_char = None
 
+
 # =========================
-
 # LOAD MODEL
-
 # =========================
 
 @app.on_event("startup")
 def load_model():
-global ocr_model, idx_to_char
+    global ocr_model, idx_to_char
 
-```
-setup_files()
+    setup_files()
 
-with open(TOKENIZER_PATH, encoding="utf-8") as f:
-    vocab = json.load(f)
+    with open(TOKENIZER_PATH, encoding="utf-8") as f:
+        vocab = json.load(f)
 
-idx_to_char = {int(v): k for k, v in vocab.items()}
+    idx_to_char = {int(v): k for k, v in vocab.items()}
 
-ocr_model = CRNN(len(vocab))
-ocr_model.load_state_dict(load_file(MODEL_PATH))
-ocr_model.to(DEVICE)
-ocr_model.eval()
+    ocr_model = CRNN(len(vocab))
+    ocr_model.load_state_dict(load_file(MODEL_PATH))
+    ocr_model.to(DEVICE)
+    ocr_model.eval()
 
-print("Model Loaded")
-```
+    print("Model Loaded")
+
 
 # =========================
-
 # OCR
-
 # =========================
 
 def preprocess(img):
-img = cv2.resize(img, (128, 32))
-img = img.astype(np.float32) / 255.0
-img = np.expand_dims(img, 0)
-img = np.expand_dims(img, 0)
-return torch.tensor(img).to(DEVICE)
+    img = cv2.resize(img, (128, 32))
+    img = img.astype(np.float32) / 255.0
+    img = np.expand_dims(img, 0)
+    img = np.expand_dims(img, 0)
+    return torch.tensor(img).to(DEVICE)
+
 
 def decode(pred):
-prev = -1
-result = []
-for p in pred:
-if p != prev and p != 0:
-result.append(idx_to_char.get(p, ""))
-prev = p
-return "".join(result)
+    prev = -1
+    result = []
+    for p in pred:
+        if p != prev and p != 0:
+            result.append(idx_to_char.get(p, ""))
+        prev = p
+    return "".join(result)
+
 
 def run_ocr(img):
-with torch.no_grad():
-out = ocr_model(preprocess(img))
-pred = out.argmax(2).squeeze().cpu().numpy()
-return decode(pred)
+    with torch.no_grad():
+        out = ocr_model(preprocess(img))
+    pred = out.argmax(2).squeeze().cpu().numpy()
+    return decode(pred)
+
 
 # =========================
-
-# API
-
+# REQUEST MODELS
 # =========================
 
 class TTSRequest(BaseModel):
-text: str
-target_language: str
+    text: str
+    target_language: str
+
+
+# =========================
+# API ENDPOINTS
+# =========================
 
 @app.get("/")
 def home():
-return {"status": "running"}
+    return {"status": "running"}
+
 
 @app.post("/ocr-translate")
 async def ocr_translate(file: UploadFile = File(...), target_language: str = "en"):
-contents = await file.read()
+    contents = await file.read()
 
-```
-img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_GRAYSCALE)
+    img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_GRAYSCALE)
 
-if img is None:
-    raise HTTPException(400, "Invalid image")
+    if img is None:
+        raise HTTPException(400, "Invalid image")
 
-text = run_ocr(img)
+    text = run_ocr(img)
 
-try:
-    translated = GoogleTranslator(source="auto", target=target_language).translate(text)
-except:
-    translated = "Translation failed"
+    try:
+        translated = GoogleTranslator(source="auto", target=target_language).translate(text)
+    except Exception:
+        translated = "Translation failed"
 
-return {
-    "ocr_text": text,
-    "translated": translated
-}
-```
+    return {
+        "ocr_text": text,
+        "translated": translated
+    }
+
 
 @app.post("/tts")
 def tts(req: TTSRequest):
-tts = gTTS(text=req.text, lang=req.target_language)
-tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-tts.save(tmp.name)
-return FileResponse(tmp.name, media_type="audio/mpeg")
-
+    tts_audio = gTTS(text=req.text, lang=req.target_language)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    tts_audio.save(tmp.name)
+    return FileResponse(tmp.name, media_type="audio/mpeg")
