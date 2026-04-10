@@ -192,7 +192,6 @@
 #     tts.save(tmp.name)
 #     return FileResponse(tmp.name, media_type="audio/mpeg")
 
-
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -209,13 +208,7 @@ from gtts import gTTS
 from deep_translator import GoogleTranslator
 from pydantic import BaseModel
 
-# =========================
-
-# APP INIT
-
-# =========================
-
-app = FastAPI(title="Telugu OCR API")
+app = FastAPI()
 
 app.add_middleware(
 CORSMiddleware,
@@ -227,8 +220,8 @@ allow_headers=["*"],
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 MODEL_DIR = "models"
-MODEL_PATH = f"{MODEL_DIR}/model.safetensors"
-TOKENIZER_PATH = f"{MODEL_DIR}/tokenizer.json"
+MODEL_PATH = os.path.join(MODEL_DIR, "model.safetensors")
+TOKENIZER_PATH = os.path.join(MODEL_DIR, "tokenizer.json")
 
 MODEL_URL = "https://drive.google.com/uc?export=download&id=14Vpa6-DCmOA6m9mnjinD2OytA8-7iUzr"
 TOKENIZER_URL = "https://drive.google.com/uc?export=download&id=1qyGK1hW-UzdXBAPda-XkP9kSsnzFpgCI"
@@ -241,33 +234,22 @@ TOKENIZER_URL = "https://drive.google.com/uc?export=download&id=1qyGK1hW-UzdXBAP
 
 def download_file(url, path):
 if os.path.exists(path) and os.path.getsize(path) > 1000:
-print(f"✅ {path} already exists")
+print("File already exists")
 return
 
 ```
-print(f"⬇ Downloading {path}...")
+print("Downloading:", path)
 
-session = requests.Session()
-response = session.get(url, stream=True)
+r = requests.get(url)
 
-# Handle Google Drive large file
-for key, value in response.cookies.items():
-    if key.startswith("download_warning"):
-        url = url + "&confirm=" + value
-        response = session.get(url, stream=True)
-
-if "text/html" in response.headers.get("Content-Type", ""):
-    raise Exception("❌ Wrong file downloaded")
+if "text/html" in r.headers.get("Content-Type", ""):
+    raise Exception("Wrong download link")
 
 with open(path, "wb") as f:
-    for chunk in response.iter_content(1024):
-        if chunk:
-            f.write(chunk)
-
-print("✅ Download complete")
+    f.write(r.content)
 ```
 
-def setup_model_files():
+def setup_files():
 os.makedirs(MODEL_DIR, exist_ok=True)
 download_file(MODEL_URL, MODEL_PATH)
 download_file(TOKENIZER_URL, TOKENIZER_PATH)
@@ -317,10 +299,7 @@ def load_model():
 global ocr_model, idx_to_char
 
 ```
-setup_model_files()
-
-if not os.path.exists(TOKENIZER_PATH):
-    raise Exception("❌ tokenizer.json missing")
+setup_files()
 
 with open(TOKENIZER_PATH, encoding="utf-8") as f:
     vocab = json.load(f)
@@ -332,7 +311,7 @@ ocr_model.load_state_dict(load_file(MODEL_PATH))
 ocr_model.to(DEVICE)
 ocr_model.eval()
 
-print("✅ Model Loaded Successfully")
+print("Model Loaded")
 ```
 
 # =========================
@@ -375,7 +354,7 @@ target_language: str
 
 @app.get("/")
 def home():
-return {"status": "running 🚀"}
+return {"status": "running"}
 
 @app.post("/ocr-translate")
 async def ocr_translate(file: UploadFile = File(...), target_language: str = "en"):
@@ -390,14 +369,13 @@ if img is None:
 text = run_ocr(img)
 
 try:
-    translated = GoogleTranslator(source='auto', target=target_language).translate(text)
+    translated = GoogleTranslator(source="auto", target=target_language).translate(text)
 except:
     translated = "Translation failed"
 
 return {
     "ocr_text": text,
-    "translated": translated,
-    "detected_language": "te"
+    "translated": translated
 }
 ```
 
@@ -407,3 +385,4 @@ tts = gTTS(text=req.text, lang=req.target_language)
 tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
 tts.save(tmp.name)
 return FileResponse(tmp.name, media_type="audio/mpeg")
+
