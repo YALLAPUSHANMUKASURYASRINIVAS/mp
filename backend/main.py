@@ -255,19 +255,59 @@ def setup_files():
 
 
 # =========================
-# MODEL
+# MODEL — architecture matches the saved checkpoint (with BatchNorm)
+#
+# Checkpoint key layout (inferred from error):
+#   cnn.0  Conv2d(1,   64,  3,1,1)
+#   cnn.1  BatchNorm2d(64)
+#   cnn.2  ReLU
+#   cnn.3  MaxPool2d(2,2)
+#   cnn.4  Conv2d(64,  128, 3,1,1)
+#   cnn.5  BatchNorm2d(128)
+#   cnn.6  ReLU
+#   cnn.7  MaxPool2d(2,2)
+#   cnn.8  Conv2d(128, 256, 3,1,1)
+#   cnn.9  BatchNorm2d(256)
+#   cnn.10 ReLU
+#   cnn.11 Conv2d(256, 256, 3,1,1)
+#   cnn.12 BatchNorm2d(256)
+#   cnn.13 ReLU
+#   cnn.14 MaxPool2d((2,1))
+#   cnn.15 Conv2d(256, 512, 3,1,1)
+#   cnn.16 BatchNorm2d(512)
+#   cnn.17 ReLU
+#   cnn.18 Conv2d(512, 512, 3,1,1)
+#   cnn.19 BatchNorm2d(512)
+#   cnn.20 ReLU
+#   cnn.21 MaxPool2d((2,1))
 # =========================
 
 class CRNN(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
         self.cnn = nn.Sequential(
-            nn.Conv2d(1, 64, 3, 1, 1), nn.ReLU(), nn.MaxPool2d(2, 2),
-            nn.Conv2d(64, 128, 3, 1, 1), nn.ReLU(), nn.MaxPool2d(2, 2),
-            nn.Conv2d(128, 256, 3, 1, 1), nn.ReLU(),
-            nn.Conv2d(256, 256, 3, 1, 1), nn.ReLU(), nn.MaxPool2d((2, 1)),
-            nn.Conv2d(256, 512, 3, 1, 1), nn.ReLU(),
-            nn.Conv2d(512, 512, 3, 1, 1), nn.ReLU(), nn.MaxPool2d((2, 1))
+            nn.Conv2d(1, 64, 3, 1, 1),       # 0
+            nn.BatchNorm2d(64),               # 1
+            nn.ReLU(),                        # 2
+            nn.MaxPool2d(2, 2),               # 3
+            nn.Conv2d(64, 128, 3, 1, 1),      # 4
+            nn.BatchNorm2d(128),              # 5
+            nn.ReLU(),                        # 6
+            nn.MaxPool2d(2, 2),               # 7
+            nn.Conv2d(128, 256, 3, 1, 1),     # 8
+            nn.BatchNorm2d(256),              # 9
+            nn.ReLU(),                        # 10
+            nn.Conv2d(256, 256, 3, 1, 1),     # 11
+            nn.BatchNorm2d(256),              # 12
+            nn.ReLU(),                        # 13
+            nn.MaxPool2d((2, 1)),             # 14
+            nn.Conv2d(256, 512, 3, 1, 1),     # 15
+            nn.BatchNorm2d(512),              # 16
+            nn.ReLU(),                        # 17
+            nn.Conv2d(512, 512, 3, 1, 1),     # 18
+            nn.BatchNorm2d(512),              # 19
+            nn.ReLU(),                        # 20
+            nn.MaxPool2d((2, 1)),             # 21
         )
         self.rnn = nn.LSTM(512 * 2, 256, num_layers=2, bidirectional=True)
         self.fc = nn.Linear(512, num_classes)
